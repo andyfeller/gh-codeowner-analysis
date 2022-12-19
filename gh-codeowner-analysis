@@ -140,7 +140,7 @@ PRESERVE=false
 REPO=
 
 __USAGE="
-Analyze and report on GitHub codeowner usage.
+Analyze GitHub repository codeowners and branch protection rules.
 
 USAGE
   $(basename $0) [options] <owner>
