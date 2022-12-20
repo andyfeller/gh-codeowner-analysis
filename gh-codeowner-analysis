@@ -4,6 +4,7 @@ set -e
 QUERY_ANALYZE_BASE='
 	query ($owner: String!, $repo: String!) {
 	  repository(owner:$owner, name:$repo) {
+	    nameWithOwner
 	    defaultBranchRef {
 	      branchProtectionRule {
 	        requiresCodeOwnerReviews
@@ -21,32 +22,16 @@ QUERY_ANALYZE_BASE='
 	        column
 	      }
 	    }
-	  }
-	}
-'
-
-QUERY_ANALYZE_CODEOWNERS_GITHUB='
-	query ($owner: String!, $repo: String!) {
-	  repository(owner:$owner, name:$repo) {
-	    object(expression: "HEAD:.github/CODEOWNERS") {
+	    codeowners_object_github: object(expression: "HEAD:.github/CODEOWNERS") {
 	      ... on Blob {
 	        text
-	        commitUrl
 	        byteSize
 	        abbreviatedOid
 	      }
 	    }
-	  }
-	}
-'
-
-QUERY_ANALYZE_CODEOWNERS_BASE='
-	query ($owner: String!, $repo: String!) {
-	  repository(owner:$owner, name:$repo) {
-	    object(expression: "HEAD:CODEOWNERS") {
+	    codeowners_object_root: object(expression: "HEAD:CODEOWNERS") {
 	      ... on Blob {
 	        text
-	        commitUrl
 	        byteSize
 	        abbreviatedOid
 	      }
@@ -58,6 +43,7 @@ QUERY_ANALYZE_CODEOWNERS_BASE='
 QUERY_ANALYZE_COLLABORATORS='
 	query ($owner: String!, $repo: String!, $endCursor: String) {
 	  repository(owner:$owner, name:$repo) {
+	    nameWithOwner
 	    collaborators(first: 100, affiliation: DIRECT, after: $endCursor) {
 	      pageInfo {
 	        endCursor
@@ -89,26 +75,6 @@ function analyze_repo() {
 		echo "$OWNER/$REPO:  skip pulling repository codeowner errors and branch protection"
 	fi
 
-	# Determine whether codeowners are managed in repository root directory
-	FILE_ANALYZE_CODEOWNERS_GITHUB="$CACHEDIR/$OWNER-$REPO-codeowners-github.json"
-
-	if ! test -f "$FILE_ANALYZE_CODEOWNERS_GITHUB"; then
-		echo "$OWNER/$REPO:  pulling repository codeowner in .github"
-		gh api graphql -f query="${QUERY_ANALYZE_CODEOWNERS_GITHUB}" -F owner=$OWNER -F repo=$REPO >> $FILE_ANALYZE_CODEOWNERS_GITHUB
-	else
-		echo "$OWNER/$REPO:  skip pulling repository codeowner in .github"
-	fi
-
-	# Determine whether codeowners are managed in repository .github directory
-	FILE_ANALYZE_CODEOWNERS_ROOT="$CACHEDIR/$OWNER-$REPO-codeowners-base.json"
-
-	if ! test -f "$FILE_ANALYZE_CODEOWNERS_ROOT"; then
-		echo "$OWNER/$REPO:  pulling repository codeowner in root"
-		gh api graphql -f query="${QUERY_ANALYZE_CODEOWNERS_BASE}" -F owner=$OWNER -F repo=$REPO >> $FILE_ANALYZE_CODEOWNERS_ROOT
-	else
-		echo "$OWNER/$REPO:  skip pulling repository codeowner in root"
-	fi
-
 	# Pull repository collaborators
 	FILE_ANALYZE_COLLABORATORS="$CACHEDIR/$OWNER-$REPO-collaborators.json"
 
@@ -121,12 +87,12 @@ function analyze_repo() {
 
 	# Extract data for report from cache
 	CODEOWNER_ERRORS=$(jq '.data.repository.codeowners.errors | length' $FILE_ANALYZE_BASE)
+	CODEOWNERS_GITHUB_EXISTS=$(jq '.data.repository.codeowners_object_github? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
+	CODEOWNERS_ROOT_EXISTS=$(jq '.data.repository.codeowners_object_root? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
+
     BPR_EXISTS=$(jq '.data.repository.defaultBranchRef?.branchProtectionRule? | if . == null then false else true end' $FILE_ANALYZE_BASE)
     BPR_CODEOWNERS_REQUIRED=$(jq '.data.repository.defaultBranchRef?.branchProtectionRule?.requiresCodeOwnerReviews // false' $FILE_ANALYZE_BASE)
     BPR_CODEOWNERS_REVIEWS=$(jq '.data.repository.defaultBranchRef?.branchProtectionRule?.requiredApprovingReviewCount // 0' $FILE_ANALYZE_BASE)
-
-	CODEOWNERS_GITHUB_EXISTS=$(jq '.data.repository.object? | has("abbreviatedOid")' $FILE_ANALYZE_CODEOWNERS_GITHUB)
-	CODEOWNERS_ROOT_EXISTS=$(jq '.data.repository.object? | has("abbreviatedOid")' $FILE_ANALYZE_CODEOWNERS_ROOT)
 
 	echo "$OWNER/$REPO:  output results; CODEOWNERS_GITHUB_EXISTS=$CODEOWNERS_GITHUB_EXISTS, CODEOWNERS_ROOT_EXISTS=$CODEOWNERS_ROOT_EXISTS, CODEOWNER_ERRORS=$CODEOWNER_ERRORS, BPR_EXISTS=$BPR_EXISTS, BPR_CODEOWNERS_REQUIRED=$BPR_CODEOWNERS_REQUIRED, BPR_CODEOWNERS_REVIEWS=$BPR_CODEOWNERS_REVIEWS"
 	printf "%s\n" $OWNER $REPO $CODEOWNERS_GITHUB_EXISTS $CODEOWNERS_ROOT_EXISTS $CODEOWNER_ERRORS $BPR_EXISTS $BPR_CODEOWNERS_REQUIRED $BPR_CODEOWNERS_REVIEWS | paste -sd ',' - >> $OUTPUTFILE
