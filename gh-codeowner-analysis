@@ -22,14 +22,14 @@ QUERY_ANALYZE_BASE='
 	        column
 	      }
 	    }
-	    codeowners_object_github: object(expression: "HEAD:.github/CODEOWNERS") {
+	    objectCodeownersGithub: object(expression: "HEAD:.github/CODEOWNERS") {
 	      ... on Blob {
 	        text
 	        byteSize
 	        abbreviatedOid
 	      }
 	    }
-	    codeowners_object_root: object(expression: "HEAD:CODEOWNERS") {
+	    objectCodeOwnersRoot: object(expression: "HEAD:CODEOWNERS") {
 	      ... on Blob {
 	        text
 	        byteSize
@@ -87,8 +87,8 @@ function analyze_repo() {
 
 	# Extract data for report from cache
 	CODEOWNER_ERRORS=$(jq '.data.repository.codeowners.errors | length' $FILE_ANALYZE_BASE)
-	CODEOWNERS_GITHUB_EXISTS=$(jq '.data.repository.codeowners_object_github? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
-	CODEOWNERS_ROOT_EXISTS=$(jq '.data.repository.codeowners_object_root? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
+	CODEOWNERS_GITHUB_EXISTS=$(jq '.data.repository.objectCodeownersGithub? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
+	CODEOWNERS_ROOT_EXISTS=$(jq '.data.repository.objectCodeOwnersRoot? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
 
     BPR_EXISTS=$(jq '.data.repository.defaultBranchRef?.branchProtectionRule? | if . == null then false else true end' $FILE_ANALYZE_BASE)
     BPR_CODEOWNERS_REQUIRED=$(jq '.data.repository.defaultBranchRef?.branchProtectionRule?.requiresCodeOwnerReviews // false' $FILE_ANALYZE_BASE)
