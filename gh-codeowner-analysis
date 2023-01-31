@@ -4,7 +4,10 @@ set -e
 QUERY_ANALYZE_BASE='
 	query ($owner: String!, $repo: String!) {
 	  repository(owner:$owner, name:$repo) {
-	    nameWithOwner
+	    name
+	    owner {
+	      login
+	    }
 	    defaultBranchRef {
 	      branchProtectionRule {
 	        requiresCodeOwnerReviews
@@ -40,20 +43,39 @@ QUERY_ANALYZE_BASE='
 	}
 '
 
-QUERY_ANALYZE_COLLABORATORS='
-	query ($owner: String!, $repo: String!, $endCursor: String) {
+QUERY_ANALYZE_ACCESS='
+	query ($owner: String!, $repo: String!, $affiliation: CollaboratorAffiliation!, $endCursor: String) {
 	  repository(owner:$owner, name:$repo) {
-	    nameWithOwner
-	    collaborators(first: 100, affiliation: DIRECT, after: $endCursor) {
+	    name
+	    owner {
+	      login
+	    }
+	    collaborators(first: 100, affiliation: $affiliation, after: $endCursor) {
 	      pageInfo {
 	        endCursor
 	        hasNextPage
 	      }
 	      edges {
-	        permission
 	        node {
-	          isEmployee
 	          login
+	        }
+	        permission
+	        permissionSources {
+	          permission
+	          source {
+	            ... on Team {
+	              type: __typename
+	              name: slug
+	            }
+	            ... on Repository {
+	              type: __typename
+	              name: name
+	            }
+	            ... on Organization {
+	              type: __typename
+	              name: login
+	            }
+	          }
 	        }
 	      }
 	    }
@@ -76,16 +98,16 @@ function analyze_repo() {
 	fi
 
 	# Pull repository collaborators
-	FILE_ANALYZE_COLLABORATORS="$CACHEDIR/$OWNER-$REPO-collaborators.json"
+	FILE_ANALYZE_ACCESS="$CACHEDIR/$OWNER-$REPO-access.json"
 
-	if ! test -f "$FILE_ANALYZE_COLLABORATORS"; then
+	if ! test -f "$FILE_ANALYZE_ACCESS"; then
 		echo "$OWNER/$REPO:  pulling repository collaborators"
-		gh api graphql -f query="${QUERY_ANALYZE_COLLABORATORS}" -F owner=$OWNER -F repo=$REPO --paginate >> $FILE_ANALYZE_COLLABORATORS
+		gh api graphql -f query="${QUERY_ANALYZE_ACCESS}" -F owner=$OWNER -F repo=$REPO -F affiliation=DIRECT --paginate >> $FILE_ANALYZE_ACCESS
 	else
 		echo "$OWNER/$REPO:  skip pulling repository collaborators"
 	fi
 
-	# Extract data for report from cache
+	# Extract branch protection rule and codeowner data for report from cache
 	CODEOWNER_ERRORS=$(jq '.data.repository.codeowners.errors | length' $FILE_ANALYZE_BASE)
 	CODEOWNERS_GITHUB_EXISTS=$(jq '.data.repository.objectCodeownersGithub? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
 	CODEOWNERS_ROOT_EXISTS=$(jq '.data.repository.objectCodeOwnersRoot? | has("abbreviatedOid")' $FILE_ANALYZE_BASE)
@@ -95,13 +117,18 @@ function analyze_repo() {
     BPR_CODEOWNERS_REVIEWS=$(jq '.data.repository.defaultBranchRef?.branchProtectionRule?.requiredApprovingReviewCount // 0' $FILE_ANALYZE_BASE)
 
 	echo "$OWNER/$REPO:  output results; CODEOWNERS_GITHUB_EXISTS=$CODEOWNERS_GITHUB_EXISTS, CODEOWNERS_ROOT_EXISTS=$CODEOWNERS_ROOT_EXISTS, CODEOWNER_ERRORS=$CODEOWNER_ERRORS, BPR_EXISTS=$BPR_EXISTS, BPR_CODEOWNERS_REQUIRED=$BPR_CODEOWNERS_REQUIRED, BPR_CODEOWNERS_REVIEWS=$BPR_CODEOWNERS_REVIEWS"
-	printf "%s\n" $OWNER $REPO $CODEOWNERS_GITHUB_EXISTS $CODEOWNERS_ROOT_EXISTS $CODEOWNER_ERRORS $BPR_EXISTS $BPR_CODEOWNERS_REQUIRED $BPR_CODEOWNERS_REVIEWS | paste -sd ',' - >> $OUTPUTFILE
+	printf "%s\n" $OWNER $REPO $CODEOWNERS_GITHUB_EXISTS $CODEOWNERS_ROOT_EXISTS $CODEOWNER_ERRORS $BPR_EXISTS $BPR_CODEOWNERS_REQUIRED $BPR_CODEOWNERS_REVIEWS | paste -sd ',' - >> $OUTPUTFILE_BASE
+
+	# Extract repository collaborator access sources for report from cache
+	jq -rs '.[].data.repository as $repo | $repo.collaborators.edges[] | . as $collaborator | $collaborator.permissionSources[] | [$repo.owner.login, $repo.name, $collaborator.node.login, $collaborator.permission, .source.type, .source.name, .permission] | @csv' $FILE_ANALYZE_ACCESS >> $OUTPUTFILE_ACCESS
+
 }
 
 FORCE=false
 CACHEDIR=
 OWNER=
-OUTPUTFILE=
+OUTPUTFILE_ACCESS=
+OUTPUTFILE_BASE=
 PRESERVE=false
 REPO=
 
@@ -113,11 +140,12 @@ USAGE
   $(basename $0) [options] <owner>/<repo>
 
 FLAGS
+  -a, --output-access <output-file>   Name of GitHub report containing repository access, without '.csv' extension
+  -b, --output-base <output-file>     Name of GitHub report containing codeowner and default branch protection rule, without '.csv' extension
   -c, --cache-dir <cache-dir>         Name of directory containing preserved data to reuse
   -d, --debug                         Enable debugging
   -f, --force                         Whether to overwrite output file if it exists
   -h, --help                          Displays help usage
-  -o, --output-file <output-file>     Name of GitHub report file to generate, without '.csv' extension
   -p, --preserve                      Preserve temporary directory containing data
 ";
 
@@ -135,7 +163,7 @@ if ! type -p jq > /dev/null; then
 	die "'jq' could not be found"
 fi
 
-while getopts "c:dfho:p-:" OPT; do
+while getopts "a:b:c:dfhp-:" OPT; do
 	if [ "$OPT" = "-" ]; then    # long option: reformulate OPT and OPTARG
 		OPT="${OPTARG%%=*}"      # extract long option name
 		OPTARG="${OPTARG#$OPT}"	 # extract long option argument (may be empty)
@@ -143,6 +171,14 @@ while getopts "c:dfho:p-:" OPT; do
 	fi
 
 	case "$OPT" in
+
+		output-access | a)
+			OUTPUTFILE_ACCESS="${OPTARG}.csv"
+			;;
+
+		output-base | b)
+			OUTPUTFILE_BASE="${OPTARG}.csv"
+			;;
 
 		cache-dir | c)
 			CACHEDIR="${OPTARG}"
@@ -161,10 +197,6 @@ while getopts "c:dfho:p-:" OPT; do
 			exit 0
 			;;
 
-		output-file | o)
-			OUTPUTFILE="${OPTARG}.csv"
-			;;
-
 		preserve | p)
 			PRESERVE=true
 			;;
@@ -180,26 +212,44 @@ elif [[ "$1" == *"/"* ]]; then
 	OWNER=$(echo $1 | cut -d '/' -f 1)
 	REPO=$(echo $1 | cut -d '/' -f 2)
 
-	if [ -z "${OUTPUTFILE}" ]; then
-		OUTPUTFILE="$OWNER-$REPO.csv"
+	if [ -z "${OUTPUTFILE_ACCESS}" ]; then
+		OUTPUTFILE_ACCESS="$OWNER-$REPO.access.csv"
+	fi
+
+	if [ -z "${OUTPUTFILE_BASE}" ]; then
+		OUTPUTFILE_BASE="$OWNER-$REPO.base.csv"
 	fi
 else
 	OWNER="$1"
 
-	if [ -z "${OUTPUTFILE}" ]; then
-		OUTPUTFILE="$OWNER.csv"
+	if [ -z "${OUTPUTFILE_ACCESS}" ]; then
+		OUTPUTFILE_ACCESS="$OWNER.access.csv"
+	fi
+
+	if [ -z "${OUTPUTFILE_BASE}" ]; then
+		OUTPUTFILE_BASE="$OWNER.base.csv"
 	fi
 fi
 
 # Handle situation if previous report file exists
-if test -f "$OUTPUTFILE"; then
+if test -f "$OUTPUTFILE_ACCESS"; then
 
 	if ! $FORCE; then
-		die "$OUTPUTFILE exists; -f, --force will delete if exists"
+		die "$OUTPUTFILE_ACCESS exists; -f, --force will delete if exists"
 	fi
 
-	echo "Deleting previous report file:  $OUTPUTFILE"
-	rm -f $OUTPUTFILE
+	echo "Deleting previous report file:  $OUTPUTFILE_ACCESS"
+	rm -f $OUTPUTFILE_ACCESS
+fi
+
+if test -f "$OUTPUTFILE_BASE"; then
+
+	if ! $FORCE; then
+		die "$OUTPUTFILE_BASE exists; -f, --force will delete if exists"
+	fi
+
+	echo "Deleting previous report file:  $OUTPUTFILE_BASE"
+	rm -f $OUTPUTFILE_BASE
 fi
 
 # Prepare temporary working directory for caching data
@@ -218,7 +268,8 @@ else
 fi
 
 # Begin analyzing repositories
-printf "%s\n" 'OWNER' 'REPO' 'CODEOWNERS_GITHUB_EXISTS' 'CODEOWNERS_ROOT_EXISTS' 'CODEOWNER_ERRORS' 'BPR_EXISTS' 'BPR_CODEOWNERS_REQUIRED' 'BPR_CODEOWNERS_REVIEWS' | paste -sd ',' - >> $OUTPUTFILE
+printf "%s\n" 'OWNER' 'REPO' 'CODEOWNERS_GITHUB_EXISTS' 'CODEOWNERS_ROOT_EXISTS' 'CODEOWNER_ERRORS' 'BPR_EXISTS' 'BPR_CODEOWNERS_REQUIRED' 'BPR_CODEOWNERS_REVIEWS' | paste -sd ',' - > $OUTPUTFILE_BASE
+printf "%s\n" 'OWNER' 'REPO' 'USER_LOGIN' 'USER_PERMISSION' 'SOURCE_TYPE' 'SOURCE_NAME' 'SOURCE_PERMISSION' | paste -sd ',' - > $OUTPUTFILE_ACCESS
 
 if [ -z "${REPO}" ]; then
 	echo "$OWNER:  pulling repositories for analysis"
