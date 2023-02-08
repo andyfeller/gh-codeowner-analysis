@@ -1,6 +1,6 @@
 # gh-codeowner-analysis
 
-A `gh` extension to analyze GitHub repository codeowners and branch protection rules.
+A `gh` extension to analyze GitHub repository codeowners, branch protection rules, and access.
 
 ## Quickstart
 
