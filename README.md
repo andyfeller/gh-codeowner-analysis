@@ -28,20 +28,40 @@ FLAGS
   -p, --preserve                      Preserve temporary directory containing data
 ```
 
-This extension generates a report around the codeowners and branch protection rules usage for the target repository owner or repository including:
+This extension generates 2 reports around the target repository owner or repository:
+
+1. codeowners and branch protection rules
+2. repository access usage
+
+The generated reports are based on the name of the target repository owner or repository.  For example, `gh codeowner-analysis andyfeller` will result in `andyfeller.base.csv` and `andyfeller.access.csv` while `gh codeowner-analysis andyfeller/gh-codeowner-analysis` will result in `andyfeller-gh-codeowner-analysis.base.csv` and `andyfeller-gh-codeowner-analysis.access.csv`.  By default, the extension will not overwrite this file unless the `-f, --force` flag is provided.
+
+By default, data is pulled and cached temporarily from the GitHub API, but it can be preserved for development or restarting purposes using `-p, --preserve` and `-c, --cache-dir` flags.
+
+### Base Report
 
 | Column | Purpose
 | --- | ---
-| CODEOWNERS_GITHUB_EXISTS | Whether /.github/CODEOWNERS file exists in repository's default branch
-| CODEOWNERS_ROOT_EXISTS | Whether /CODEOWNERS file exists in repository's default branch
+| OWNER | Owner of repository, either an organization or user
+| REPO | Name of repository
+| CODEOWNERS_GITHUB_EXISTS | Whether `/.github/CODEOWNERS` file exists in repository's default branch
+| CODEOWNERS_ROOT_EXISTS | Whether `/CODEOWNERS` file exists in repository's default branch
 | CODEOWNER_ERRORS | Whether errors exist in CODEOWNERS file(s)
 | BPR_EXISTS | Whether branch protection rule exists on repository's default branch
 | BPR_CODEOWNERS_REQUIRED | Whether branch protection rule requires codeowners to review pull requests being merged into default branch
 | BPR_CODEOWNERS_REVIEWS | How many reviews the branch protection rule requires to merge pull requests into default branch
 
-The generated report is based on the name of the target repository owner or repository.  For example, `gh codeowner-analysis andyfeller` will result in `andyfeller.csv` while `gh codeowner-analysis andyfeller/gh-codeowner-analysis` will result in `andyfeller-gh-codeowner-analysis.csv`.  By default, the extension will not overwrite this file unless the `-f, --force` flag is provided.
+### Access Report
 
-By default, data is pulled and cached temporarily from the GitHub API, but it can be preserved for development or restarting purposes using `-p, --preserve` and `-c, --cache-dir` flags.
+| Column | Purpose
+| --- | ---
+| OWNER | Owner of repository, either an organization or user
+| REPO | Name of repository
+| USER_LOGIN | User name with access to repository
+| USER_PERMISSION | Effective permission from all sources
+| SOURCE_TYPE | Permission source type, either `Organization`, `Team`, `Repository`
+| SOURCE_NAME | Permission source name, either organization login, team slug, repository name
+| SOURCE_PERMISSION | Permission granted by permission source
+
 
 ## Setup
 
